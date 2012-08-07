@@ -35,7 +35,7 @@ function workbench_access_menu() {
   );
   $items['admin/config/workbench/access/editors'] = array(
     'title' => 'Editors',
-    'description' => 'Editor settings.',
+    'description' => 'The editor assignment settings.',
     'page callback' => 'workbench_access_editors',
     'access arguments' => array('assign workbench access'),
     'type' => MENU_DEFAULT_LOCAL_TASK,
@@ -98,6 +98,21 @@ function workbench_access_menu() {
     'weight' => 1,
     'file' => 'workbench_access.admin.inc',
   );
+
+  // Provide a content tab if not using workbench.
+  if (!module_exists('workbench') && module_exists('views')) {
+    $items['user/%user/workbench_access'] = array(
+      'title' => 'Content',
+      'access arguments' => array(1),
+      'access callback' => 'workbench_access_views_access',
+      'page callback' => 'views_embed_view',
+      'page arguments' => array('workbench_access_content', 'default'),
+      'description' => 'View content assigned to my sections.',
+      'type' => MENU_LOCAL_TASK,
+      'weight' => 2,
+    );
+  }
+
   return $items;
 }
 
@@ -124,29 +139,12 @@ function workbench_access_menu_alter(&$items) {
     );
   }
 
-  // Only needed if Workbench module is disabled.
-  if (module_exists('workbench')) {
-    return;
-  }
-
-  // Provide a content tab if not using workbench.
-  if (module_exists('views')) {
-    $items['user/%user/workbench_access'] = array(
-      'title' => 'Content',
-      'access arguments' => array(1),
-      'access callback' => 'workbench_access_views_access',
-      'page callback' => 'views_embed_view',
-      'page arguments' => array('workbench_access_content', 'default'),
-      'description' => 'View content assigned to my sections.',
-      'type' => MENU_LOCAL_TASK,
-      'weight' => 2,
-    );
-  }
   // It is possible that another module added this item.
   if (isset($items['admin/config/workbench'])) {
     return;
   }
-  // Add a top-level menu item.
+
+  // Add a top-level menu item if one does not exist.
   $items['admin/config/workbench'] = array(
     'title' => 'Workbench',
     'description' => 'Workbench configuration',
@@ -1234,11 +1232,17 @@ function workbench_access_build_tree(&$tree, $sections = NULL, $depth = -1) {
     if ($item['depth'] > $max_depth) {
       $max_depth = $item['depth'];
     }
+    // Set the parentage of this item.
     if ($depth == 0 && !empty($item['parent']) && isset($tree[$item['parent']])) {
-      $tree[$item['parent']]['children'][] = $id;
+      $tree[$item['parent']]['children'][$id] = $id;
     }
+    // Append the children of the current item to its parent.
     elseif ($item['depth'] > 0 && !empty($item['children']) && isset($tree[$item['parent']]['children'])) {
-      $tree[$item['parent']]['children'] = array_unique(array_merge($tree[$item['parent']]['children'], $item['children']));
+      foreach ($item['children'] as $child_id) {
+        if (!isset($child_id, $tree[$item['parent']]['children'][$child_id])) {
+          $tree[$item['parent']]['children'][$child_id] = $child_id;
+        }
+      }
     }
   }
   workbench_access_build_tree($tree, $sections, $depth);
@@ -1883,7 +1887,7 @@ function workbench_access_mass_update($nodes, $access_id, $access_scheme) {
     $node = (object) $data;
     workbench_access_node_update($node);
   }
-  drupal_set_message(t('Editorial sections updated'));
+  drupal_set_message(t('Editorial sections have been updated.'));
 }
 
 /**
@@ -1945,7 +1949,8 @@ function workbench_access_get_roles($permission) {
  */
 function workbench_access_check_access_fields() {
   $broken = array();
-  if (variable_get('workbench_access_custom_form', 1)) {
+  $active = workbench_access_get_active_tree();
+  if (variable_get('workbench_access_custom_form', 1) || !empty($active['access_scheme']['form_field'])) {
     return $broken;
   }
   $types = node_type_get_types();
